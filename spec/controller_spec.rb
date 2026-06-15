@@ -26,11 +26,16 @@ RSpec.describe DedupeRequests::Controller do
 
     attr_reader :request, :response, :rendered
 
-    def initialize(action:, request:)
+    def initialize(action:, request:, caller: nil)
       @action_name = action
       @request = request
+      @caller = caller
       @response = FakeResponse.new
       @rendered = nil
+    end
+
+    def current_caller
+      @caller
     end
 
     def action_name
@@ -68,15 +73,15 @@ RSpec.describe DedupeRequests::Controller do
     ran
   end
 
-  describe "the de-dupe set DSL (only/also/skip)" do
+  describe "the de-dupe set DSL (only/skip)" do
     it "only: sets the exact action list" do
       expect(controller_class(only: %i[create update]).dedupe_requests_actions)
         .to contain_exactly(:create, :update)
     end
 
-    it "also: adds to the inherited baseline" do
+    it "only: in a subclass adds to the inherited set" do
       base = controller_class(only: %i[create update])
-      sub = Class.new(base) { dedupe_requests also: %i[approve] }
+      sub = Class.new(base) { dedupe_requests only: %i[approve] }
       expect(sub.dedupe_requests_actions).to contain_exactly(:create, :update, :approve)
     end
 
@@ -97,6 +102,18 @@ RSpec.describe DedupeRequests::Controller do
       Class.new(base) { dedupe_requests skip: %i[create] }
       expect(base.dedupe_requests_actions).to contain_exactly(:create, :update)
     end
+
+    it "treats skip: of a never-guarded action as a harmless no-op (across inheritance)" do
+      app = Class.new(FakeController) { dedupe_requests only: [:create] }
+      sub = Class.new(app) { dedupe_requests skip: [:update] } # update was never guarded
+
+      expect(sub.dedupe_requests_actions).to contain_exactly(:create)
+
+      # create is still deduped in the subclass — the stray skip didn't break it
+      run(sub.new(action: "create", request: req))
+      dup = sub.new(action: "create", request: req)
+      expect(run(dup)).to be(false)
+    end
   end
 
   describe "around behavior" do
@@ -104,6 +121,17 @@ RSpec.describe DedupeRequests::Controller do
       controller = controller_class(only: %i[create]).new(action: "index", request: req)
       expect(run(controller)).to be(true)
       expect(controller.rendered).to be_nil
+    end
+
+    it "does not dedupe an action removed with skip: (no dedupe at all)" do
+      klass = Class.new(FakeController) do
+        dedupe_requests only: %i[create update]
+        dedupe_requests skip: [:create]
+      end
+      run(klass.new(action: "create", request: req))
+      dup = klass.new(action: "create", request: req)
+      expect(run(dup)).to be(true) # create was skipped → never deduped, runs again
+      expect(dup.rendered).to be_nil
     end
 
     it "processes the first request" do
@@ -174,6 +202,15 @@ RSpec.describe DedupeRequests::Controller do
       expect(run(dup)).to be(false)
     end
 
+    it "keeps the fingerprint on a 3xx redirect (Post/Redirect/Get) so a duplicate is still blocked" do
+      klass = controller_class(only: %i[create])
+      first = klass.new(action: "create", request: req)
+      first.send(:dedupe_requests_around) { first.response.status = 303 }
+
+      dup = klass.new(action: "create", request: req)
+      expect(run(dup)).to be(false) # 303 kept the claim → duplicate blocked
+    end
+
     it "emits duplicate_detected and duplicate_rejected hooks" do
       events = []
       DedupeRequests.config.on_duplicate_detected = ->(info) { events << [:detected, info[:action]] }
@@ -206,7 +243,11 @@ RSpec.describe DedupeRequests::Controller do
 
   describe "edge cases" do
     it "processes the request (no 409) when the store reports redis down (fail open)" do
-      DedupeRequests.config.store = Class.new { def claim(*, **) = :error }.new
+      DedupeRequests.config.store = Class.new do
+        def claim(*_args, **_opts)
+          :error
+        end
+      end.new
       controller = controller_class(only: %i[create]).new(action: "create", request: req)
       expect(run(controller)).to be(true)
       expect(controller.rendered).to be_nil
@@ -242,6 +283,90 @@ RSpec.describe DedupeRequests::Controller do
       run(controller_class(only: %i[create], ttl: 30).new(action: "create", request: req))
 
       expect(spy.ttl).to eq(30)
+    end
+
+    it "resolves caller_id from the controller and scopes dedupe per caller" do
+      DedupeRequests.config.caller_id = ->(controller) { controller.current_caller }
+      klass = controller_class(only: %i[create])
+
+      run(klass.new(action: "create", request: req, caller: "u1"))
+      same = klass.new(action: "create", request: req, caller: "u1")
+      expect(run(same)).to be(false) # same caller + body → duplicate
+
+      other = klass.new(action: "create", request: req, caller: "u2")
+      expect(run(other)).to be(true) # different caller → independent
+    end
+
+    it "works when caller_id is disabled (nil)" do
+      DedupeRequests.config.caller_id = nil
+      controller = controller_class(only: %i[create]).new(action: "create", request: req)
+      expect(run(controller)).to be(true)
+    end
+  end
+
+  # Per-action TTL: each `dedupe_requests` line attaches its `ttl:` to exactly the
+  # actions it names; lines accumulate; resolution per action is its own TTL, then
+  # the global config.ttl.
+  describe "per-action TTL" do
+    # Captures the ttl the store actually receives for a given action.
+    def captured_ttl_for(klass, action)
+      spy = Class.new do
+        attr_reader :ttl
+
+        def claim(_fingerprint, ttl:)
+          @ttl = ttl
+          "tok"
+        end
+
+        def release(*, **)
+          true
+        end
+      end.new
+      DedupeRequests.config.store = spy
+      klass.new(action: action.to_s, request: req).send(:dedupe_requests_around) {}
+      spy.ttl
+    end
+
+    # Top-level baseline: create/update guarded with TTL 90.
+    let(:app_controller) { Class.new(FakeController) { dedupe_requests only: %i[create update], ttl: 90 } }
+
+    it "applies one line's TTL to every action named on that line" do
+      klass = Class.new(FakeController) { dedupe_requests only: %i[create update], ttl: 120 }
+      expect(captured_ttl_for(klass, :create)).to eq(120)
+      expect(captured_ttl_for(klass, :update)).to eq(120)
+    end
+
+    it "gives each action its own TTL when declared on separate lines" do
+      klass = Class.new(FakeController) do
+        dedupe_requests only: [:create], ttl: 120
+        dedupe_requests only: [:update], ttl: 180
+      end
+      expect(captured_ttl_for(klass, :create)).to eq(120)
+      expect(captured_ttl_for(klass, :update)).to eq(180)
+    end
+
+    it "inherits per-action TTLs from a parent controller" do
+      sub = Class.new(app_controller)
+      expect(captured_ttl_for(sub, :create)).to eq(90)
+      expect(captured_ttl_for(sub, :update)).to eq(90)
+    end
+
+    it "lets a subclass change the TTL by re-declaring the actions" do
+      sub = Class.new(app_controller) { dedupe_requests only: %i[create update], ttl: 30 }
+      expect(captured_ttl_for(sub, :create)).to eq(30)
+      expect(captured_ttl_for(sub, :update)).to eq(30)
+    end
+
+    it "lets a subclass override one action's TTL, leaving the others inherited" do
+      sub = Class.new(app_controller) { dedupe_requests only: [:update], ttl: 180 }
+      expect(captured_ttl_for(sub, :create)).to eq(90)  # inherited
+      expect(captured_ttl_for(sub, :update)).to eq(180) # overridden
+    end
+
+    it "falls back to the global config TTL when a line has no ttl" do
+      DedupeRequests.config.ttl = 120
+      plain = Class.new(FakeController) { dedupe_requests only: [:create] }
+      expect(captured_ttl_for(plain, :create)).to eq(120)
     end
   end
 end

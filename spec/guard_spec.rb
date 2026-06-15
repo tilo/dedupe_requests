@@ -31,7 +31,11 @@ RSpec.describe DedupeRequests::Guard do
   end
 
   it "fails open (skip) when the store reports a redis error" do
-    config.store = Class.new { def claim(*, **) = :error }.new
+    config.store = Class.new do
+      def claim(*_args, **_opts)
+        :error
+      end
+    end.new
     expect(guard.claim(req).outcome).to eq(:skip)
   end
 

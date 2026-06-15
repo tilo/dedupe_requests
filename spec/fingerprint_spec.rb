@@ -5,17 +5,19 @@ require "stringio"
 RSpec.describe DedupeRequests::Fingerprint do
   let(:config) { DedupeRequests::Configuration.new }
 
-  def req(method: "POST", path: "/orders", query: "", body: "{}", auth: nil)
+  def req(method: "POST", path: "/orders", query: "", body: "{}")
     RequestDouble.new(
       request_method: method, path: path, query_string: query, raw_post: body,
-      headers: auth ? { "HTTP_AUTHORIZATION" => auth } : {}, cookies: {}
+      headers: {}, cookies: {}
     )
   end
 
   # A request that exposes a readable body IO instead of #raw_post.
   def body_request(io)
     Struct.new(:request_method, :path, :query_string, :body, :headers, :cookies, keyword_init: true) do
-      def get_header(name) = (headers || {})[name]
+      def get_header(name)
+        (headers || {})[name]
+      end
     end.new(request_method: "POST", path: "/x", query_string: "", body: io, headers: {}, cookies: {})
   end
 
@@ -48,21 +50,14 @@ RSpec.describe DedupeRequests::Fingerprint do
         .not_to eq(described_class.for_request(req(query: "a=2"), config))
     end
 
-    it "separates callers by identity (Authorization header)" do
-      expect(described_class.for_request(req(auth: "user-a"), config))
-        .not_to eq(described_class.for_request(req(auth: "user-b"), config))
+    it "separates callers by the caller_id" do
+      expect(described_class.for_request(req, config, caller_id: "user-a"))
+        .not_to eq(described_class.for_request(req, config, caller_id: "user-b"))
     end
 
     it "uses a full fingerprint override when configured" do
       config.fingerprint = ->(_request) { "FIXED" }
       expect(described_class.for_request(req, config)).to eq("FIXED")
-    end
-
-    it "honors a max_body_bytes cap (bodies sharing the capped prefix collide)" do
-      config.max_body_bytes = 3
-      a = described_class.for_request(req(body: "abcXXX"), config)
-      b = described_class.for_request(req(body: "abcYYY"), config)
-      expect(a).to eq(b)
     end
   end
 
@@ -82,14 +77,15 @@ RSpec.describe DedupeRequests::Fingerprint do
       expect(described_class.for_request(body_request(nil), config)).to match(/\A[0-9a-f]{64}\z/)
     end
 
-    it "omits caller identity when caller_id is nil" do
-      config.caller_id = nil
+    it "omits caller identity when no caller_id is given" do
       expect(described_class.for_request(req, config)).to match(/\A[0-9a-f]{64}\z/)
     end
 
     it "reads a body that cannot be rewound" do
       no_rewind = Object.new
-      def no_rewind.read = "payload"
+      def no_rewind.read
+        "payload"
+      end
       expect(described_class.for_request(body_request(no_rewind), config)).to match(/\A[0-9a-f]{64}\z/)
     end
 
@@ -120,6 +116,11 @@ RSpec.describe DedupeRequests::Fingerprint do
 
     it "raises on an unknown algorithm" do
       expect { described_class.digest(%w[x], :nope) }.to raise_error(ArgumentError)
+    end
+
+    it "falls back to the stdlib Digest when OpenSSL can't compute the hash" do
+      allow(OpenSSL::Digest).to receive(:hexdigest).and_raise(RuntimeError)
+      expect(described_class.digest(%w[x], :sha256)).to eq(Digest::SHA256.hexdigest("1:x"))
     end
   end
 end

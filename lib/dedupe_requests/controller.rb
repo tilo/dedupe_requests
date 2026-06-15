@@ -11,37 +11,50 @@ module DedupeRequests
   #     dedupe_requests only: %i[create update]
   #   end
   #
-  # Registers a SINGLE around_action that, for actions in the controller's
-  # de-dupe set, claims before the action runs and releases on any non-2xx
-  # response or raised exception. The set is an inherited class_attribute so
-  # subclasses can replace (only:), extend (also:), or trim (skip:) it.
+  # Registers a SINGLE around_action that, for each guarded action, claims before
+  # the action runs and releases on a 4xx/5xx response or a raised exception
+  # (2xx/3xx keep the claim). The guarded actions and their per-action TTLs live
+  # in an inherited class_attribute map, so subclasses extend or trim it.
   module Controller
     extend ActiveSupport::Concern
 
     included do
-      class_attribute :dedupe_requests_actions, instance_accessor: false, default: nil
-      class_attribute :dedupe_requests_options, instance_accessor: false, default: {}
+      # Map of guarded action (Symbol) => TTL (Integer, or nil meaning "use the
+      # global config TTL"). Inherited and copy-on-write, so a subclass can add
+      # to or trim it without touching the parent.
+      class_attribute :dedupe_requests_action_ttls, instance_accessor: false, default: {}
       around_action :dedupe_requests_around
     end
 
     class_methods do
-      def dedupe_requests(only: nil, also: nil, skip: nil, **options)
-        inherited = dedupe_requests_actions || []
-        new_set =
-          if only
-            Array(only).map(&:to_sym)
-          else
-            set = inherited.dup
-            set |= Array(also).map(&:to_sym) if also
-            set -= Array(skip).map(&:to_sym) if skip
-            set
-          end
-        self.dedupe_requests_actions = new_set.uniq
-        self.dedupe_requests_options = dedupe_requests_options.merge(options) unless options.empty?
+      # Guard the named actions. A `ttl:`, if given, applies to exactly the
+      # actions named in THIS call. Calls accumulate, so per-action TTLs are
+      # expressed by repeating the line:
+      #
+      #   dedupe_requests only: %i[create update]       # both, global TTL
+      #   dedupe_requests only: [:create], ttl: 120     # create → 120
+      #   dedupe_requests only: [:update], ttl: 180     # update → 180
+      #
+      # Re-naming an action overrides its TTL. Subclasses inherit the map and can
+      # add to it or remove from it (`skip:` / `skip_dedupe_requests`).
+      def dedupe_requests(only: nil, skip: nil, ttl: nil)
+        map = dedupe_requests_action_ttls.dup
+
+        Array(only).each { |action| map[action.to_sym] = ttl }
+        Array(skip).each { |action| map.delete(action.to_sym) }
+
+        self.dedupe_requests_action_ttls = map
       end
 
       def skip_dedupe_requests(only: nil)
-        self.dedupe_requests_actions = (dedupe_requests_actions || []) - Array(only).map(&:to_sym)
+        map = dedupe_requests_action_ttls.dup
+        Array(only).each { |action| map.delete(action.to_sym) }
+        self.dedupe_requests_action_ttls = map
+      end
+
+      # The set of guarded actions (the keys of the TTL map).
+      def dedupe_requests_actions
+        dedupe_requests_action_ttls.keys
       end
     end
 
@@ -53,8 +66,11 @@ module DedupeRequests
         return
       end
 
-      ttl = self.class.dedupe_requests_options[:ttl] || DedupeRequests.config.ttl
-      result = dedupe_requests_guard.claim(request, ttl: ttl)
+      result = dedupe_requests_guard.claim(
+        request,
+        ttl: dedupe_requests_ttl_for(action_name),
+        caller_id: dedupe_requests_caller_id
+      )
 
       case result.outcome
       when :duplicate
@@ -82,19 +98,30 @@ module DedupeRequests
     def dedupe_requests_applies?
       return false unless DedupeRequests.config.enabled?
 
-      actions = self.class.dedupe_requests_actions
-      !actions.nil? && actions.include?(action_name.to_sym)
+      self.class.dedupe_requests_action_ttls.key?(action_name.to_sym)
+    end
+
+    # Per-action TTL, falling back to the global config TTL.
+    def dedupe_requests_ttl_for(action)
+      self.class.dedupe_requests_action_ttls[action.to_sym] || DedupeRequests.config.ttl
+    end
+
+    # Resolve the caller identity by handing the whole controller to the
+    # configured `caller_id` callable (so it can use current_user, a header, etc.).
+    def dedupe_requests_caller_id
+      DedupeRequests.config.caller_id&.call(self)
     end
 
     def dedupe_requests_guard
       @dedupe_requests_guard ||= DedupeRequests::Guard.new(DedupeRequests.config)
     end
 
-    # A request didn't complete successfully → free the fingerprint so a genuine
-    # retry isn't blocked. Only a 2xx keeps the fingerprint for the full TTL.
+    # Keep the fingerprint when the request was handled — a 2xx, or a 3xx
+    # redirect (the Post/Redirect/Get pattern is a *successful* create) — so a
+    # later duplicate is still blocked for the full TTL. Only a 4xx/5xx (or a
+    # raised exception) releases it, so a genuinely failed request can be retried.
     def dedupe_requests_release?(status)
-      code = status.to_i
-      code < 200 || code >= 300
+      status.to_i >= 400
     end
 
     def dedupe_requests_render_conflict
