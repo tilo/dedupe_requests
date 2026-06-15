@@ -20,7 +20,7 @@ RSpec.describe "Rails end-to-end with real Redis" do
 
   class RealAppController < ActionController::Base
     include DedupeRequests::Controller
-    dedupe_requests only: %i[create flaky boom redirected]
+    dedupe_requests on: %i[create flaky boom redirected]
 
     def create
       render json: { ok: true }, status: :created

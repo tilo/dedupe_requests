@@ -8,7 +8,7 @@ module DedupeRequests
   #
   #   class ApplicationController < ActionController::Base
   #     include DedupeRequests::Controller
-  #     dedupe_requests only: %i[create update]
+  #     dedupe_requests on: %i[create update]
   #   end
   #
   # Registers a SINGLE around_action that, for each guarded action, claims before
@@ -31,24 +31,24 @@ module DedupeRequests
       # actions named in THIS call. Calls accumulate, so per-action TTLs are
       # expressed by repeating the line:
       #
-      #   dedupe_requests only: %i[create update]       # both, global TTL
-      #   dedupe_requests only: [:create], ttl: 120     # create → 120
-      #   dedupe_requests only: [:update], ttl: 180     # update → 180
+      #   dedupe_requests on: %i[create update]       # both, global TTL
+      #   dedupe_requests on: [:create], ttl: 120     # create → 120
+      #   dedupe_requests on: [:update], ttl: 180     # update → 180
       #
       # Re-naming an action overrides its TTL. Subclasses inherit the map and can
       # add to it or remove from it (`skip:` / `skip_dedupe_requests`).
-      def dedupe_requests(only: nil, skip: nil, ttl: nil)
+      def dedupe_requests(on: nil, skip: nil, ttl: nil)
         map = dedupe_requests_action_ttls.dup
 
-        Array(only).each { |action| map[action.to_sym] = ttl }
+        Array(on).each { |action| map[action.to_sym] = ttl }
         Array(skip).each { |action| map.delete(action.to_sym) }
 
         self.dedupe_requests_action_ttls = map
       end
 
-      def skip_dedupe_requests(only: nil)
+      def skip_dedupe_requests(on: nil)
         map = dedupe_requests_action_ttls.dup
-        Array(only).each { |action| map.delete(action.to_sym) }
+        Array(on).each { |action| map.delete(action.to_sym) }
         self.dedupe_requests_action_ttls = map
       end
 

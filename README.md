@@ -56,7 +56,7 @@ Include the concern once (usually in `ApplicationController`), then declare whic
 ```ruby
 class ApplicationController < ActionController::Base
   include DedupeRequests::Controller
-  dedupe_requests only: %i[create update]     # project-wide baseline
+  dedupe_requests on: %i[create update]     # project-wide baseline
 end
 ```
 
@@ -64,12 +64,12 @@ Each `dedupe_requests` line **adds** the actions it names to the guarded set —
 
 | Option  | Effect on this controller                      |
 | ------- | ---------------------------------------------- |
-| `only:` | guard these actions (uses this line's `ttl:`)  |
+| `on:`   | guard these actions (uses this line's `ttl:`)  |
 | `skip:` | stop guarding these actions — no dedupe at all  |
 
 ```ruby
 class OrdersController < ApplicationController
-  dedupe_requests only: %i[approve cancel]   # adds approve/cancel to the inherited create/update
+  dedupe_requests on: %i[approve cancel]   # adds approve/cancel to the inherited create/update
 end
 
 class DraftsController < ApplicationController
@@ -83,8 +83,8 @@ A `ttl:` applies to exactly the actions named on its line. Give different action
 
 ```ruby
 class PaymentsController < ApplicationController
-  dedupe_requests only: %i[create charge], ttl: 120   # create + charge → 120s
-  dedupe_requests only: [:refund],         ttl: 600   # refund → 600s
+  dedupe_requests on: %i[create charge], ttl: 120   # create + charge → 120s
+  dedupe_requests on: [:refund],         ttl: 600   # refund → 600s
 end
 ```
 
