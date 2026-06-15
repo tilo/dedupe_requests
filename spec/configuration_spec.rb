@@ -55,6 +55,14 @@ RSpec.describe DedupeRequests::Configuration do
     expect(config.conflict_body).to eq("x" => 1)
   end
 
+  it "threads config.logger into the auto-built store (logged on a Redis error)" do
+    logger = double("logger")
+    expect(logger).to receive(:warn).with(/redis error/)
+    config.logger = logger
+    config.redis = Class.new { def with; raise "down"; end }.new
+    expect(config.store.claim("fp", ttl: 1)).to eq(:error)
+  end
+
   describe "DEFAULT_CALLER_ID" do
     def request_with(headers: {}, cookies: {})
       RequestDouble.new(

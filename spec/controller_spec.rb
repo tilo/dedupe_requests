@@ -185,6 +185,23 @@ RSpec.describe DedupeRequests::Controller do
 
       expect(events).to eq([[:detected, "create"], [:rejected, "create"]])
     end
+
+    it "passes the full payload (all five keys) to the hooks" do
+      captured = nil
+      DedupeRequests.config.on_duplicate_detected = ->(info) { captured = info }
+
+      klass = controller_class(only: %i[create])
+      run(klass.new(action: "create", request: req))
+      run(klass.new(action: "create", request: req))
+
+      expect(captured).to match(
+        fingerprint: a_string_matching(/\A[0-9a-f]{64}\z/),
+        controller: "orders",
+        action: "create",
+        verb: "POST",
+        path: "/orders"
+      )
+    end
   end
 
   describe "edge cases" do

@@ -43,6 +43,7 @@ DedupeRequests.configure do |c|
   c.digest    = :sha256             # :sha256 | :sha512 | :sha1 | :md5 | ->(bytes) { ... }
   c.namespace = "myapp"             # Redis key prefix
   c.caller_id = ->(req) { req.get_header("HTTP_AUTHORIZATION") } # per-caller scoping
+  c.logger    = Rails.logger        # where Redis/fail-open errors are logged
 end
 ```
 
@@ -126,7 +127,7 @@ A `409` is deliberate: well-behaved retrying clients do **not** loop on a 409 (t
 
 ## Reliability
 
-- **Fail open.** If Redis is unreachable, the request proceeds normally — a Redis outage never blocks traffic. Redis errors are rescued and logged (set `config.logger`).
+- **Fail open.** If Redis is unreachable, the request proceeds normally — a Redis outage never blocks traffic. Redis errors are rescued and logged (set `config.logger`). The logger is used **only** for these Redis/fail-open errors — not for normal duplicate handling (use the hooks above for that) — and it is wired automatically only when the store is built from `config.redis`. If you inject your own `config.store`, pass it a logger directly.
 - **Token-safe release.** Each claim stores a random token; release deletes the key only if it still holds that token (via a Lua check-and-del), so a slow request whose TTL expired can't wipe a newer request's fresh claim.
 
 ## Configuration reference
