@@ -19,7 +19,7 @@ This is different from the usual idempotency-key gems: the **server** computes t
 3. It runs an atomic `SET key <token> NX EX <ttl>` in Redis.
    - **Key already existed** → it's a duplicate. In `enforce` mode, respond `409`; in `observe` mode, just record it and let it through.
    - **Key created** → first occurrence. Run the action normally.
-4. After the action: a `2xx` keeps the fingerprint until the TTL expires (so a later duplicate is blocked); **any non-2xx or a raised exception releases the fingerprint**, so a genuine retry of a failed request is allowed.
+4. After the action: a **2xx, or a 3xx redirect** (the Post/Redirect/Get pattern is a successful create), keeps the fingerprint until the TTL expires — so a later duplicate is blocked; a **4xx/5xx or a raised exception releases** the fingerprint, so a genuine retry of a failed request is allowed.
 
 GET and DELETE are never deduped. Time is not part of the fingerprint — the window is the Redis TTL.
 
@@ -42,7 +42,7 @@ DedupeRequests.configure do |c|
   c.ttl       = 90                  # the dedup window, in seconds
   c.digest    = :sha256             # :sha256 | :sha512 | :sha1 | :md5 | ->(bytes) { ... }
   c.namespace = "myapp"             # Redis key prefix
-  c.caller_id = ->(req) { req.get_header("HTTP_AUTHORIZATION") } # per-caller scoping
+  c.caller_id = ->(controller) { controller.current_user&.id }   # per-caller scoping
   c.logger    = Rails.logger        # where Redis/fail-open errors are logged
 end
 ```
@@ -56,35 +56,57 @@ Include the concern once (usually in `ApplicationController`), then declare whic
 ```ruby
 class ApplicationController < ActionController::Base
   include DedupeRequests::Controller
-  dedupe_requests only: %i[create update]     # project-wide baseline
+  dedupe_requests on: %i[create update]     # project-wide baseline
 end
 ```
 
-Subclasses adjust the inherited baseline with three set operations:
+Each `dedupe_requests` line **adds** the actions it names to the guarded set — it does not replace anything (same as Rails' own `before_action only:`). A controller inherits its parent's guarded actions and can add more or drop some:
 
-| Option  | Meaning for this controller        | Result vs. inherited set |
-| ------- | ---------------------------------- | ------------------------ |
-| `only:` | exact list — ignore the baseline   | replace                  |
-| `also:` | baseline **plus** these            | inherited ∪ these        |
-| `skip:` | baseline **minus** these           | inherited − these        |
+| Option  | Effect on this controller                      |
+| ------- | ---------------------------------------------- |
+| `on:`   | guard these actions (uses this line's `ttl:`)  |
+| `skip:` | stop guarding these actions — no dedupe at all  |
 
 ```ruby
-class ReportsController < ApplicationController
-  dedupe_requests only: %i[generate]          # ignore baseline; just this action
+class OrdersController < ApplicationController
+  dedupe_requests on: %i[approve cancel]   # adds approve/cancel to the inherited create/update
 end
 
 class DraftsController < ApplicationController
-  dedupe_requests skip: %i[create]            # baseline minus create
-end
-
-class OrdersController < ApplicationController
-  dedupe_requests also: %i[approve cancel]    # baseline plus these two
+  dedupe_requests skip: %i[create]           # guards everything inherited except create
 end
 ```
 
-A per-controller TTL override rides on the same line: `dedupe_requests only: %i[create], ttl: 120`.
+#### Per-action TTL
+
+A `ttl:` applies to exactly the actions named on its line. Give different actions different windows by repeating the line — a list shares one TTL:
+
+```ruby
+class PaymentsController < ApplicationController
+  dedupe_requests on: %i[create charge], ttl: 120   # create + charge → 120s
+  dedupe_requests on: [:refund],         ttl: 600   # refund → 600s
+end
+```
+
+An action with no `ttl:` falls back to the global `config.ttl`; re-declaring an action updates its TTL.
 
 You never specify HTTP verbs per action — the route already determines the verb, and the gem only ever guards POST/PUT/PATCH.
+
+### 3. Per-caller identity (`caller_id`)
+
+Dedup is scoped per caller, so two different users sending the same payload don't collide. `caller_id` is a callable given the **controller**, so it can read whatever identifies the caller:
+
+```ruby
+DedupeRequests.configure do |c|
+  c.caller_id = ->(controller) { controller.current_user&.id }                       # current_user
+  # c.caller_id = ->(controller) { controller.request.get_header("HTTP_X_API_KEY") }  # a header
+  # c.caller_id = ->(controller) { controller.some_method }                           # any controller method
+end
+```
+
+If you don't set it, the default derives identity from the `Authorization` header, falling back to a Rails session cookie — so token- and cookie-auth apps work with no configuration.
+
+> **Note:** make sure you configure `caller_id` correctly for your API. If it can't derive an identity (no `Authorization` header and no session cookie), it falls back to `nil` — and then *different* callers sending the same payload to the same endpoint are treated as one request, so the second gets a 409. That's probably not what you want, so set `caller_id` to whatever identifies a caller in your app.
 
 ## Modes and safe rollout
 
@@ -102,12 +124,14 @@ Wire the hooks to your metrics/logging backend (Datadog, StatsD, logs — your c
 
 ```ruby
 DedupeRequests.configure do |c|
-  c.on_duplicate_detected = ->(info) { StatsD.increment("dedupe.detected", tags: info) }
-  c.on_duplicate_rejected = ->(info) { StatsD.increment("dedupe.rejected", tags: info) }
+  c.on_duplicate_detected = ->(info) { StatsD.increment("dedupe.detected", tags: { controller: info[:controller], action: info[:action], verb: info[:verb] }) }
+  c.on_duplicate_rejected = ->(info) { StatsD.increment("dedupe.rejected", tags: { controller: info[:controller], action: info[:action], verb: info[:verb] }) }
 end
 ```
 
 Each hook receives `{ fingerprint:, controller:, action:, verb:, path: }`. `duplicate_detected` fires in both `observe` and `enforce`; `duplicate_rejected` only when a 409 is actually returned.
+
+When tagging metrics, use only `controller`, `action`, and `verb` — these come from a small fixed set. Do **not** tag with `fingerprint` or `path`: the fingerprint is unique per request and the path usually contains record ids, so tagging with them creates a separate counter per request (a surprise bill on Datadog, or dropped series and broken dashboards). Log those instead if you need them.
 
 ## The 409 response
 
@@ -129,6 +153,7 @@ A `409` is deliberate: well-behaved retrying clients do **not** loop on a 409 (t
 
 - **Fail open.** If Redis is unreachable, the request proceeds normally — a Redis outage never blocks traffic. Redis errors are rescued and logged (set `config.logger`). The logger is used **only** for these Redis/fail-open errors — not for normal duplicate handling (use the hooks above for that) — and it is wired automatically only when the store is built from `config.redis`. If you inject your own `config.store`, pass it a logger directly.
 - **Token-safe release.** Each claim stores a random token; release deletes the key only if it still holds that token (via a Lua check-and-del), so a slow request whose TTL expired can't wipe a newer request's fresh claim.
+- **Compile Ruby with OpenSSL — for speed.** The fingerprint hashes the request body on the hot path. It uses `OpenSSL::Digest`, which runs on the CPU's SHA instructions (SHA-NI / ARM crypto) at ~1.5–2 GB/s. If your Ruby is built **without** OpenSSL, the gem still works — it falls back to the stdlib `Digest` — but that's a portable software implementation (~300–500 MB/s, no SHA instructions), several times slower on large bodies. So build Ruby with OpenSSL in production.
 
 ## Configuration reference
 
@@ -140,9 +165,8 @@ A `409` is deliberate: well-behaved retrying clients do **not** loop on a 409 (t
 | `ttl`                    | `90`                 | Dedup window, in seconds.                                         |
 | `digest`                 | `:sha256`            | `:sha256` / `:sha512` / `:sha1` / `:md5`, or a callable.          |
 | `namespace`              | `"dedupe_requests"`  | Redis key prefix (`<namespace>:dedup:<hash>`).                    |
-| `caller_id`              | Authorization / session cookie | Callable returning a per-caller identity.             |
+| `caller_id`              | Authorization / session cookie | Callable **given the controller**, returns a per-caller identity (e.g. `->(c){ c.current_user&.id }`, a header via `c.request`, or any controller method). Default derives it from the Authorization header / session cookie. |
 | `fingerprint`            | `nil`                | Callable to fully override fingerprint computation.              |
-| `max_body_bytes`         | `nil`                | Cap how many body bytes are hashed (for very large payloads).     |
 | `conflict_status`        | `409`                | Status returned for a rejected duplicate.                        |
 | `conflict_body`          | structured errors    | JSON body for a rejected duplicate.                              |
 | `logger`                 | `nil`                | Where Redis errors are logged.                                   |

@@ -29,27 +29,44 @@ RSpec.describe DedupeRequests::RedisStore do
 
   it "wraps a bare client so a connection pool also works" do
     pool = Class.new do
-      def initialize(redis) = @redis = redis
-      def with = yield @redis
+      def initialize(redis)
+        @redis = redis
+      end
+
+      def with
+        yield @redis
+      end
     end.new(redis)
     pooled = described_class.new(pool, namespace: "t")
     expect(pooled.claim("fp", ttl: 60)).to be_a(String)
   end
 
   it "fails open (returns :error) when redis raises" do
-    boom = Class.new { def with; raise "redis down"; end }.new
+    boom = Class.new do
+      def with
+        raise "redis down"
+      end
+    end.new
     expect(described_class.new(boom).claim("fp", ttl: 60)).to eq(:error)
   end
 
   it "logs via the configured logger when redis raises" do
     logger = double("logger")
     expect(logger).to receive(:warn).with(/redis error/)
-    boom = Class.new { def with; raise "down"; end }.new
+    boom = Class.new do
+      def with
+        raise "down"
+      end
+    end.new
     expect(described_class.new(boom, logger: logger).claim("fp", ttl: 60)).to eq(:error)
   end
 
   it "release returns false (rescued) when redis raises" do
-    boom = Class.new { def with; raise "down"; end }.new
+    boom = Class.new do
+      def with
+        raise "down"
+      end
+    end.new
     expect(described_class.new(boom).release("fp", "tok")).to be(false)
   end
 end

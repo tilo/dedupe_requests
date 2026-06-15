@@ -59,7 +59,11 @@ RSpec.describe DedupeRequests::Configuration do
     logger = double("logger")
     expect(logger).to receive(:warn).with(/redis error/)
     config.logger = logger
-    config.redis = Class.new { def with; raise "down"; end }.new
+    config.redis = Class.new do
+      def with
+        raise "down"
+      end
+    end.new
     expect(config.store.claim("fp", ttl: 1)).to eq(:error)
   end
 
@@ -87,18 +91,27 @@ RSpec.describe DedupeRequests::Configuration do
 
     it "skips the Authorization check when the request has no get_header" do
       obj = Object.new
-      def obj.cookies = { "_app_session" => "ck" }
+      def obj.cookies
+        { "_app_session" => "ck" }
+      end
       expect(described_class::DEFAULT_CALLER_ID.call(obj)).to eq("ck")
     end
 
     it "returns nil when the request supports no cookies and has no auth" do
       obj = Object.new
-      def obj.get_header(_name) = nil
+      def obj.get_header(_name)
+        nil
+      end
       expect(described_class::DEFAULT_CALLER_ID.call(obj)).to be_nil
     end
 
     it "ignores cookies that are not a session cookie" do
       expect(described_class::DEFAULT_CALLER_ID.call(request_with(cookies: { "tracking" => "x" }))).to be_nil
+    end
+
+    it "reads from controller.request when given a controller" do
+      controller = Struct.new(:request).new(request_with(headers: { "HTTP_AUTHORIZATION" => "Bearer y" }))
+      expect(described_class::DEFAULT_CALLER_ID.call(controller)).to eq("Bearer y")
     end
   end
 end

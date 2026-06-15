@@ -10,7 +10,7 @@ class FakeRedis
     @store = {}
   end
 
-  def set(key, value, nx: false, ex: nil)
+  def set(key, value, nx: false, ex: nil) # rubocop:disable Lint/UnusedMethodArgument
     return false if nx && @store.key?(key)
 
     @store[key] = value

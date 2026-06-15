@@ -67,6 +67,12 @@ jobs:
       - name: Test
         run: bundle exec rake
 
+      # Lint once, on a modern Ruby only (rubocop drops old Rubies; running it on
+      # every cell would fail on 2.6/2.7).
+      - name: Lint
+        if: matrix.os == 'ubuntu' && matrix.ruby == '3.4'
+        run: bundle exec rubocop
+
       # Upload coverage once (single representative cell) to avoid duplicate reports.
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu' && matrix.ruby == '3.4'

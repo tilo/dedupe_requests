@@ -1,9 +1,15 @@
 # frozen_string_literal: true
 
+# ActiveSupport < 7.1 references ::Logger without requiring it, so loading
+# action_controller (in the integration specs) raises "uninitialized constant
+# ActiveSupport::LoggerThreadSafeLevel::Logger" on older Rubies. Load it first.
+require "logger"
+
 require "simplecov"
 SimpleCov.start do
   add_filter "/spec/"
   enable_coverage :branch
+  minimum_coverage line: 100, branch: 100
 end
 
 require "dedupe_requests"

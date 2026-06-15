@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "lib/dedupe_requests/version"
-
+# rubocop:disable Layout/LineLength
 Gem::Specification.new do |spec|
   spec.name     = "dedupe_requests"
   spec.version  = DedupeRequests::VERSION
@@ -21,8 +21,9 @@ Gem::Specification.new do |spec|
   spec.files = Dir["lib/**/*.rb", "README.md", "CHANGELOG.md", "LICENSE.txt"]
   spec.require_paths = ["lib"]
 
-  spec.add_dependency "activesupport", ">= 7.0"
+  spec.add_dependency "activesupport", ">= 5.2"
 
   spec.add_development_dependency "rake", "~> 13.0"
   spec.add_development_dependency "rspec", "~> 3.0"
 end
+# rubocop:enable Layout/LineLength

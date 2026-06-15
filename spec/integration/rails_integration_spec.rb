@@ -24,7 +24,7 @@ RSpec.describe "Rails integration" do
 
   class DummyApplicationController < ActionController::Base
     include DedupeRequests::Controller
-    dedupe_requests only: %i[create update]
+    dedupe_requests on: %i[create update]
   end
 
   class WidgetsController < DummyApplicationController

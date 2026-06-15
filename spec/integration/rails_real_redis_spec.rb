@@ -20,10 +20,14 @@ RSpec.describe "Rails end-to-end with real Redis" do
 
   class RealAppController < ActionController::Base
     include DedupeRequests::Controller
-    dedupe_requests only: %i[create flaky boom]
+    dedupe_requests on: %i[create flaky boom redirected]
 
     def create
       render json: { ok: true }, status: :created
+    end
+
+    def redirected
+      redirect_to "/things", status: :see_other
     end
 
     def flaky
@@ -40,6 +44,7 @@ RSpec.describe "Rails end-to-end with real Redis" do
     post "/things" => "real_app#create"
     post "/flaky"  => "real_app#flaky"
     post "/boom"   => "real_app#boom"
+    post "/redirected" => "real_app#redirected"
   end
 
   def app
@@ -80,5 +85,12 @@ RSpec.describe "Rails end-to-end with real Redis" do
   it "releases via the real Lua after a raised exception, so an identical retry is NOT blocked" do
     expect { post_json "/boom" }.to raise_error(/kaboom/)
     expect { post_json "/boom" }.to raise_error(/kaboom/) # raises again (not a 409) → released
+  end
+
+  it "keeps the fingerprint on a 3xx redirect (Post/Redirect/Get), so a duplicate IS blocked" do
+    post_json "/redirected"
+    expect(last_response.status).to eq(303)
+    post_json "/redirected"
+    expect(last_response.status).to eq(409) # 3xx kept the claim → duplicate rejected
   end
 end

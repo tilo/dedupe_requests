@@ -11,18 +11,18 @@ module DedupeRequests
       @config = config
     end
 
-    def claim(request, ttl: @config.ttl)
+    def claim(request, ttl: @config.ttl, caller_id: nil)
       return Result.new(:skip) unless @config.enabled?
       return Result.new(:skip) unless DedupeRequests::MUTATING_VERBS.include?(request.request_method.to_s)
 
       store = @config.store
       return Result.new(:skip) unless store
 
-      fingerprint = Fingerprint.for_request(request, @config)
+      fingerprint = Fingerprint.for_request(request, @config, caller_id: caller_id)
       token = store.claim(fingerprint, ttl: ttl)
 
       case token
-      when :error then Result.new(:skip)              # Redis down → fail open
+      when :error then Result.new(:skip) # Redis down → fail open
       when false  then Result.new(:duplicate, fingerprint)
       else             Result.new(:claimed, fingerprint, token)
       end
