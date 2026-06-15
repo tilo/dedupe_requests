@@ -92,6 +92,15 @@ RSpec.describe DedupeRequests::Fingerprint do
       def no_rewind.read = "payload"
       expect(described_class.for_request(body_request(no_rewind), config)).to match(/\A[0-9a-f]{64}\z/)
     end
+
+    it "ignores any client-supplied Idempotency-Key header (it never affects the fingerprint)" do
+      without_key = described_class.for_request(req(body: "{}"), config)
+      with_key = RequestDouble.new(
+        request_method: "POST", path: "/orders", query_string: "", raw_post: "{}",
+        headers: { "HTTP_IDEMPOTENCY_KEY" => "abc" }, cookies: {}
+      )
+      expect(described_class.for_request(with_key, config)).to eq(without_key)
+    end
   end
 
   describe ".digest" do

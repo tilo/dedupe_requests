@@ -1,0 +1,85 @@
+name: Ruby
+
+# Runs on every branch push and every pull request, so the matrix runs as soon
+# as you push a branch to GitHub.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# Cancel an in-progress run when a newer commit is pushed to the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test_matrix:
+    name: Ruby ${{ matrix.ruby }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}-latest
+    environment: test # so the job can read CODECOV_TOKEN from the "test" environment's secrets
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu
+          - macos
+        ruby:
+          - "2.6"
+          - "2.7"
+          - "3.0"
+          - "3.1"
+          - "3.2"
+          - "3.3"
+          - "3.4"
+          - "4.0"
+          - head
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Ruby ${{ matrix.ruby }}
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      # The suite includes specs that talk to a real Redis (so the Lua release
+      # script actually runs). A `services:` container can't run on macOS runners,
+      # so install/start Redis per-OS instead. The specs use redis://localhost:6379/15.
+      - name: Start Redis (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y redis-server
+          redis-server --daemonize yes
+
+      - name: Start Redis (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install redis
+          redis-server --daemonize yes
+
+      # `rake` default = spec (no C extension here, so nothing to compile).
+      - name: Test
+        run: bundle exec rake
+
+      # Upload coverage once (single representative cell) to avoid duplicate reports.
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu' && matrix.ruby == '3.4'
+        uses: codecov/codecov-action@v6
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: tilo/dedupe_requests
+          files: coverage/.resultset.json
+          fail_ci_if_error: false
+
+  finish:
+    name: All green
+    runs-on: ubuntu-latest
+    needs: [test_matrix]
+    steps:
+      - run: echo "All matrix jobs passed."

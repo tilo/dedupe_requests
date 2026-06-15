@@ -93,6 +93,12 @@ RSpec.describe "Rails integration" do
     expect(last_response.status).to eq(201)
   end
 
+  it "ignores a client-supplied Idempotency-Key header (same body is still a duplicate)" do
+    post_json "/widgets", '{"amount":10}', "HTTP_IDEMPOTENCY_KEY" => "key-1"
+    post_json "/widgets", '{"amount":10}', "HTTP_IDEMPOTENCY_KEY" => "key-2"
+    expect(last_response.status).to eq(409)
+  end
+
   it "dedupes PATCH (update) too" do
     patch "/widgets/1", '{"x":1}', "CONTENT_TYPE" => "application/json"
     expect(last_response.status).to eq(200)

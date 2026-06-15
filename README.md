@@ -151,7 +151,7 @@ A `409` is deliberate: well-behaved retrying clients do **not** loop on a 409 (t
 
 ## Limitations
 
-Auto-hashing the payload means two *genuinely separate* requests with identical content (e.g. deliberately creating two identical records in quick succession) look like a duplicate, and the second gets a 409. Mitigations: keep the TTL short, and opt specific actions out with `skip_dedupe_requests` (or `skip:`). This is best-effort de-duplication, not exactly-once semantics, and it never replaces an explicit idempotency key if a caller already sends one.
+Auto-hashing the payload means two *genuinely separate* requests with identical content (e.g. deliberately creating two identical records in quick succession) look like a duplicate, and the second gets a 409. Mitigations: keep the TTL short, and opt specific actions out with `skip_dedupe_requests` (or `skip:`). This is best-effort de-duplication, not exactly-once semantics. It does **not** use client-supplied idempotency keys at all — an `Idempotency-Key` (or any similar) header is ignored and has no effect on the fingerprint; de-duplication is entirely server-computed.
 
 ## Development
 
