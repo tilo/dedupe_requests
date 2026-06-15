@@ -1,0 +1,210 @@
+AllCops:
+  TargetRubyVersion: 2.6 # matches required_ruby_version in the gemspec
+
+Layout/SpaceBeforeBlockBraces:
+  Enabled: false
+
+Layout/SpaceInsideBlockBraces:
+  Enabled: false
+
+Layout/SpaceInsideHashLiteralBraces:
+  Enabled: false
+
+Layout/SpaceAroundOperators:
+  Enabled: false
+
+Lint/ConstantDefinitionInBlock:
+  Enabled: false
+
+Lint/UnderscorePrefixedVariableName:
+  Enabled: false
+
+Metrics/AbcSize:
+  Enabled: false
+
+Metrics/BlockLength:
+  Enabled: false
+
+Metrics/BlockNesting:
+  Enabled: false
+
+Metrics/ClassLength:
+  Enabled: false
+
+Metrics/CyclomaticComplexity:
+  Enabled: false
+
+Metrics/MethodLength:
+  Enabled: false
+
+Metrics/ModuleLength:
+  Enabled: false
+
+Metrics/ParameterLists:
+  Enabled: false
+
+Metrics/PerceivedComplexity:
+  Enabled: false
+
+Naming/MethodParameterName:
+  Enabled: false
+
+Naming/PredicateName:
+  Enabled: false
+
+Naming/VariableName:
+  Enabled: false
+
+Naming/VariableNumber:
+  Enabled: false
+
+Style/AccessorGrouping: # not needed
+  Enabled: false
+
+Style/ClassEqualityComparison:
+  Enabled: false
+
+Style/ClassMethods:
+  Enabled: false
+
+Style/ConditionalAssignment:
+  Enabled: false
+
+Style/CommentAnnotation:
+  Enabled: false
+
+Style/CommentedKeyword:
+  Enabled: false
+
+Style/Documentation:
+  Enabled: false
+
+Style/DoubleNegation: # that's how to make true boolean results - this rule is nonsense
+  Enabled: false
+
+Style/EmptyElse:
+  Enabled: false
+
+Style/Encoding:
+  Enabled: false
+
+Style/EvalWithLocation:
+  Enabled: false
+
+Style/EvenOdd:
+  Enabled: false
+
+Style/FormatString:
+  Enabled: false
+
+Style/FormatStringToken:
+  Enabled: false
+
+Style/GuardClause:
+  Enabled: false
+
+Style/IfInsideElse:
+  Enabled: false
+
+Style/IfUnlessModifier:
+  Enabled: false
+
+Style/InverseMethods:
+  Enabled: false
+
+Style/InfiniteLoop: # perf: `while true` avoids Kernel#loop's per-iteration block-yield in the hot parser loops
+  Enabled: false
+
+Style/MultipleComparison: # perf: `[a,b].include?(x)` allocates a 2-element Array on every call in hot parser loops; `x == a || x == b` does not (allocation cost survives YJIT)
+  Enabled: false
+
+Style/Lambda:
+  Enabled: false
+
+Style/ExponentialNotation:
+  Enabled: false
+
+Style/NestedTernaryOperator:
+  Enabled: false
+
+Style/OptionalBooleanParameter:
+  Enabled: false
+
+Style/PreferredHashMethods:
+  Enabled: false
+
+Style/NumericPredicate:
+  Enabled: false
+
+Style/PercentLiteralDelimiters:
+  Enabled: false
+
+Style/RegexpLiteral:
+  Enabled: false
+
+Style/RescueModifier:
+  Enabled: false
+
+Style/SafeNavigation:
+  Enabled: false
+
+Style/SlicingWithRange:
+  Enabled: false
+
+Style/SoleNestedConditional:
+  Enabled: false
+
+Style/SpecialGlobalVars: # DANGER: unsafe rule!!
+  Enabled: false
+
+Style/StderrPuts:
+  Enabled: false # DANGER: unsafe rule!! we DO NOT want warn here
+
+Style/StringConcatenation:
+  Enabled: false
+
+Style/StringLiterals:
+  Enabled: false
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  Enabled: false
+  EnforcedStyle: double_quotes
+
+Style/SymbolArray:
+  Enabled: false
+
+Style/SymbolProc: # old Ruby versions can't do this
+  Enabled: false
+
+Style/TernaryParentheses: # parentheses are good!
+  Enabled: false
+
+Style/TrailingCommaInArrayLiteral:
+  Enabled: false
+  EnforcedStyleForMultiline: consistent_comma
+
+Style/TrailingCommaInHashLiteral:
+  Enabled: false
+  EnforcedStyleForMultiline: consistent_comma
+
+Style/TrailingUnderscoreVariable:
+  Enabled: false
+
+Style/TrivialAccessors:
+  Enabled: false
+
+Style/WhileUntilModifier:
+  Enabled: false
+
+Style/WordArray:
+  Enabled: false
+
+# Style/UnlessModifier:
+#   Enabled: false
+
+Style/ZeroLengthPredicate:
+  Enabled: false
+
+Layout/LineLength:
+  Max: 256
