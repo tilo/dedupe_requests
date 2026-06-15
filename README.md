@@ -60,7 +60,9 @@ class ApplicationController < ActionController::Base
 end
 ```
 
-Each `dedupe_requests` line **adds** the actions it names to the guarded set — it does not replace anything (same as Rails' own `before_action only:`). A controller inherits its parent's guarded actions and can add more or drop some:
+Each `dedupe_requests` line **adds** the actions it names to the list of deduplicated actions — it does not replace anything (same as Rails' own `before_action only:`). A controller inherits its parent's guarded actions and can add more or drop some:
+
+The list of deduplicated actions is matched by **action name**: once the baseline names `create`, every controller that inherits it deduplicates its own `create` action — not just `ApplicationController`'s. Opt a controller out with `skip:`.
 
 | Option  | Effect on this controller                      |
 | ------- | ---------------------------------------------- |
