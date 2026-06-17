@@ -1,5 +1,7 @@
 # dedupe_requests
 
+![Gem Version](https://img.shields.io/gem/v/dedupe_requests) [![codecov](https://codecov.io/gh/tilo/dedupe_requests/branch/main/graph/badge.svg)](https://codecov.io/gh/tilo/dedupe_requests) <!-- [![Downloads](https://img.shields.io/gem/dt/dedupe_requests)](https://rubygems.org/gems/dedupe_requests) --> [![RubyGems](https://img.shields.io/badge/RubyGems-dedupe__requests-brightgreen?logo=rubygems&logoColor=white)](https://rubygems.org/gems/dedupe_requests) [![Ruby Toolbox](https://img.shields.io/badge/Ruby%20Toolbox-dedupe__requests-brightgreen)](https://www.ruby-toolbox.com/projects/dedupe_requests)
+
 Automatic server-side de-duplication of inbound mutating Rails requests (POST / PUT / PATCH), with **no client-side idempotency key required**.
 
 When a client re-sends the same mutating request — because of a retry, a network timeout, a double-click, or a buggy client — a non-idempotent endpoint often turns the duplicate into a 5xx (the resource is already created or modified).
