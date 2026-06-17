@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+
 #
 # End-to-end test of dedupe_requests against a REAL HTTP server.
 #
@@ -64,12 +65,13 @@ GLOBAL_TTL    = 2
 PAYMENT_TTL   = 5
 SLOW_SECONDS  = 1
 
-$port = ENFORCE_PORT # which booted server the request helpers talk to
+# which booted server the request helpers talk to (switched per server in with_server)
+$port = ENFORCE_PORT # rubocop:disable Style/GlobalVars
 
 # Simulated callers -> the Authorization header the gem's default caller_id reads.
 CALLERS = {
   alice: "Bearer token-alice",
-  bob:   "Bearer token-bob",
+  bob: "Bearer token-bob",
   carol: "Bearer token-carol"
 }.freeze
 
@@ -97,7 +99,7 @@ HOOK_PAYLOAD     = { event: "hook-check" }.freeze
 # ---------------------------------------------------------------------------
 # tiny assertion harness
 # ---------------------------------------------------------------------------
-FAILURES = []
+FAILURES = [] # rubocop:disable Style/MutableConstant -- appended to at runtime, must stay mutable
 def check(label, got, expected)
   ok = got == expected
   puts format("  %-64s %-26s %s", label, "got #{got.inspect}", ok ? "OK" : "FAIL (want #{expected.inspect})")
@@ -117,7 +119,7 @@ def request(method, path, as:, payload: nil, api_key: nil)
   req["Authorization"] = CALLERS.fetch(as)
   req["X-Api-Key"] = api_key if api_key
   req.body = JSON.generate(payload) if payload
-  Net::HTTP.start(HOST, $port) { |http| http.request(req) }
+  Net::HTTP.start(HOST, $port) { |http| http.request(req) } # rubocop:disable Style/GlobalVars
 end
 
 def post(path, payload:, as: :alice, api_key: nil)
@@ -169,7 +171,7 @@ def with_server(port, extra_env = {})
       FAILURES << "server boot on port #{port}"
       return
     end
-    $port = port
+    $port = port # rubocop:disable Style/GlobalVars
     yield
   ensure
     begin
@@ -259,8 +261,8 @@ with_server(ENFORCE_PORT) do
   check("on_duplicate_detected fired once for /hooked", hooked.count { |e| e["hook"] == "detected" }, 1)
   check("on_duplicate_rejected fired once for /hooked", hooked.count { |e| e["hook"] == "rejected" }, 1)
   detected = hooked.find { |e| e["hook"] == "detected" } || {}
-  check("detected hook carries action=create",  detected["action"], "create")
-  check("detected hook carries verb=POST",       detected["verb"],   "POST")
+  check("detected hook carries action=create", detected["action"], "create")
+  check("detected hook carries verb=POST",       detected["verb"], "POST")
   check("detected hook carries a fingerprint",   !detected["fingerprint"].to_s.empty?, true)
 end
 
@@ -285,7 +287,7 @@ with_server(FINGERPRINT_PORT, "DEDUPE_CUSTOM_FINGERPRINT" => "1") do
   check("POST /widgets alice (different body B -> still dup)", status(post("/widgets", payload: WIDGET_GREEN)),             409) # body ignored
   check("POST /widgets bob   (different caller -> still dup)", status(post("/widgets", payload: WIDGET_CREATE, as: :bob)),  409) # caller ignored
   fp = hook_events.select { |e| e["hook"] == "fingerprint" && e["path"] == "/widgets" }
-  check("custom fingerprint hook was invoked per request",     fp.size, 3)
+  check("custom fingerprint hook was invoked per request", fp.size, 3)
 end
 
 # ===========================================================================

@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+
 #
 # A real Rails API service that exercises every dedupe_requests feature, booted
 # as a REAL HTTP server (Puma) for examples/end_to_end_test.rb.
@@ -41,7 +42,7 @@ PAYMENT_TTL = Integer(ENV.fetch("DEDUPE_PAYMENT_TTL", "5"))
 # Test instrumentation: every hook invocation is appended here (one Puma process,
 # many threads, so a Mutex is enough), and exposed at GET /_hooks so the test can
 # assert — over HTTP — that the right hooks fired with the right data.
-HOOK_EVENTS = []
+HOOK_EVENTS = [] # rubocop:disable Style/MutableConstant -- appended to at runtime, must stay mutable
 HOOK_MUTEX  = Mutex.new
 def record_hook(event)
   HOOK_MUTEX.synchronize { HOOK_EVENTS << event }
