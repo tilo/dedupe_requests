@@ -168,12 +168,14 @@ A `409` is deliberate: well-behaved retrying clients do **not** loop on a 409 (t
 | `digest`                 | `:sha256`            | `:sha256` / `:sha512` / `:sha1` / `:md5`, or a callable.          |
 | `namespace`              | `"dedupe_requests"`  | Redis key prefix (`<namespace>:dedup:<hash>`).                    |
 | `caller_id`              | Authorization / session cookie | Callable **given the controller**, returns a per-caller identity (e.g. `->(c){ c.current_user&.id }`, a header via `c.request`, or any controller method). Default derives it from the Authorization header / session cookie. |
-| `fingerprint`            | `nil`                | Callable to fully override fingerprint computation.              |
+| `fingerprint`            | `nil`                | Callable **given the request**, returns the fingerprint string — fully overriding the default computation. |
 | `conflict_status`        | `409`                | Status returned for a rejected duplicate.                        |
 | `conflict_body`          | structured errors    | JSON body for a rejected duplicate.                              |
 | `logger`                 | `nil`                | Where Redis errors are logged.                                   |
 | `on_duplicate_detected`  | `nil`                | Hook fired when a duplicate is seen.                             |
 | `on_duplicate_rejected`  | `nil`                | Hook fired when a duplicate is rejected with a 409.             |
+
+> **Why `caller_id` is given the controller but `fingerprint` is given the request:** they answer different questions at different layers. `caller_id` identifies *who* is calling — an app-level question that often needs controller context like `current_user`, so it receives the controller. `fingerprint` characterizes *which request* this is — a pure function of the HTTP request (verb + path + query + body), computed in the framework-agnostic core where the body is hashed on the hot path, so it receives the request directly. Each callable is handed the object that matches its job.
 
 ## Limitations
 
