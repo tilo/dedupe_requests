@@ -23,7 +23,7 @@ This is different from the usual idempotency-key gems: the **server** computes t
    - **Key created** → first occurrence. Run the action normally.
 4. After the action: a **2xx, or a 3xx redirect** (the Post/Redirect/Get pattern is a successful create), keeps the fingerprint until the TTL expires — so a later duplicate is blocked; a **4xx/5xx or a raised exception releases** the fingerprint, so a genuine retry of a failed request is allowed.
 
-GET and DELETE are never deduped. Time is not part of the fingerprint — the window is the Redis TTL.
+GET and DELETE are never deduped. Time is not part of the fingerprint — the time window is the Redis TTL.
 
 ## Installation
 
