@@ -7,7 +7,7 @@ gemspec
 group :test do
   gem "actionpack", ">= 5.2"
   gem "mock_redis"
-  gem "puma" # real HTTP server for the examples/integration_test.rb end-to-end test
+  gem "puma" # real HTTP server for the examples/end_to_end_test.rb end-to-end test
   gem "rack-test"
   gem "redis"
   gem "rubocop", require: false
