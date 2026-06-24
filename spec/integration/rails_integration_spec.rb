@@ -58,11 +58,16 @@ RSpec.describe "Rails integration" do
     DedupeRequests.configure do |c|
       c.redis = redis
       c.namespace = "test"
+      # The default no longer reads Authorization; configure it explicitly (the
+      # realistic pattern). Tests send `HTTP_AUTHORIZATION` to identify the caller.
+      c.caller_id = ->(controller) { controller.request.get_header("HTTP_AUTHORIZATION") }
     end
   end
 
+  # Default Authorization header so the default caller_id resolves an identity
+  # (dedup is skipped when it can't). Tests that vary the caller override it.
   def post_json(path, body, headers = {})
-    post path, body, { "CONTENT_TYPE" => "application/json" }.merge(headers)
+    post path, body, { "CONTENT_TYPE" => "application/json", "HTTP_AUTHORIZATION" => "Bearer test-caller" }.merge(headers)
   end
 
   it "processes the first POST normally" do
@@ -100,9 +105,9 @@ RSpec.describe "Rails integration" do
   end
 
   it "dedupes PATCH (update) too" do
-    patch "/widgets/1", '{"x":1}', "CONTENT_TYPE" => "application/json"
+    patch "/widgets/1", '{"x":1}', "CONTENT_TYPE" => "application/json", "HTTP_AUTHORIZATION" => "Bearer test-caller"
     expect(last_response.status).to eq(200)
-    patch "/widgets/1", '{"x":1}', "CONTENT_TYPE" => "application/json"
+    patch "/widgets/1", '{"x":1}', "CONTENT_TYPE" => "application/json", "HTTP_AUTHORIZATION" => "Bearer test-caller"
     expect(last_response.status).to eq(409)
   end
 

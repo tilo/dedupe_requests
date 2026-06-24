@@ -12,28 +12,18 @@ module DedupeRequests
       }]
     }.freeze
 
-    # Per-caller identity. The callable is given the CONTROLLER, so it can read
-    # anything the controller exposes — `current_user`, a helper method, or a
-    # header via `controller.request`. Examples:
+    # Per-caller identity. There is NO default — you MUST configure `caller_id`
+    # with a callable that returns a stable, non-secret identifier for the caller
+    # (a user id, a JWT `sub`, an API-client id). Do NOT use a raw bearer token or
+    # API key: it's secret and it rotates, so the same caller would look like
+    # different callers and de-duplication would silently weaken. The callable is
+    # given the CONTROLLER, so it can read `current_user`, a helper, or a header via
+    # `controller.request`. Examples:
     #   c.caller_id = ->(controller) { controller.current_user&.id }
     #   c.caller_id = ->(controller) { controller.request.get_header("HTTP_X_API_KEY") }
-    #
-    # The default derives identity from the request's Authorization header,
-    # falling back to a Rails-style session cookie (so token- and cookie-auth
-    # apps work with no configuration). It accepts either a controller or a bare
-    # request.
-    DEFAULT_CALLER_ID = lambda do |context|
-      request = context.respond_to?(:request) ? context.request : context
-      if request.respond_to?(:get_header)
-        auth = request.get_header("HTTP_AUTHORIZATION")
-        return auth if auth && !auth.to_s.empty?
-      end
-      if request.respond_to?(:cookies)
-        request.cookies.each { |name, value| return value if name.to_s =~ /\A_.*_session\z/i }
-      end
-      nil
-    end
-
+    # When `caller_id` is unset or returns nil, de-duplication is skipped for the
+    # request (and a warning is logged), rather than risk treating different callers
+    # as one.
     attr_accessor :redis, :ttl, :digest, :namespace, :caller_id, :fingerprint,
                   :conflict_status, :logger,
                   :on_duplicate_detected, :on_duplicate_rejected
@@ -47,7 +37,7 @@ module DedupeRequests
       @ttl = 90
       @digest = :sha256
       @namespace = "dedupe_requests"
-      @caller_id = DEFAULT_CALLER_ID
+      @caller_id = nil
       @fingerprint = nil
       @conflict_status = 409
       @logger = nil

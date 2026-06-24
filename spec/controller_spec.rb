@@ -59,7 +59,15 @@ RSpec.describe DedupeRequests::Controller do
     )
   end
 
-  before { DedupeRequests.configure { |c| c.redis = FakeRedis.new } }
+  # A stable caller identity for the dedup tests (the default no longer reads the
+  # Authorization header). Tests that exercise per-caller scoping or the
+  # no-identity path override `config.caller_id` themselves.
+  before do
+    DedupeRequests.configure do |c|
+      c.redis = FakeRedis.new
+      c.caller_id = ->(_controller) { "tester" }
+    end
+  end
 
   # An isolated controller class per call, so class-level state doesn't leak.
   def controller_class(**dsl)
@@ -297,9 +305,43 @@ RSpec.describe DedupeRequests::Controller do
       expect(run(other)).to be(true) # different caller → independent
     end
 
-    it "works when caller_id is disabled (nil)" do
+    it "skips de-duplication (does not enforce) when caller_id resolves to nil" do
       DedupeRequests.config.caller_id = nil
+      klass = controller_class(on: %i[create])
+
+      expect(run(klass.new(action: "create", request: req))).to be(true)
+      # A duplicate also runs: with no caller identity we skip dedup rather than
+      # risk a false 409 across different callers.
+      expect(run(klass.new(action: "create", request: req))).to be(true)
+    end
+
+    it "warns via the configured logger when caller_id resolves to nil for a guarded mutating action" do
+      DedupeRequests.config.caller_id = nil
+      logger = instance_double(Logger, warn: nil)
+      DedupeRequests.config.logger = logger
+
+      run(controller_class(on: %i[create]).new(action: "create", request: req))
+      expect(logger).to have_received(:warn).with(/caller_id resolved to nil/)
+    end
+
+    it "falls back to Kernel#warn when no logger is configured" do
+      DedupeRequests.config.caller_id = nil
+      DedupeRequests.config.logger = nil
       controller = controller_class(on: %i[create]).new(action: "create", request: req)
+
+      expect(controller).to receive(:warn).with(/caller_id resolved to nil/)
+      run(controller)
+    end
+
+    it "does not warn for a non-mutating verb even when caller_id is nil" do
+      DedupeRequests.config.caller_id = nil
+      get_req = RequestDouble.new(
+        request_method: "GET", path: "/orders", query_string: "", raw_post: "{}",
+        headers: {}, cookies: {}
+      )
+      controller = controller_class(on: %i[create]).new(action: "create", request: get_req)
+
+      expect(controller).not_to receive(:warn)
       expect(run(controller)).to be(true)
     end
   end

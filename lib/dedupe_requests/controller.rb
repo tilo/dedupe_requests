@@ -66,10 +66,28 @@ module DedupeRequests
         return
       end
 
+      # GET/DELETE are never deduped — bail out before resolving caller_id, so the
+      # caller_id callable only runs for the verbs we actually de-duplicate.
+      unless dedupe_requests_mutating_verb?
+        yield
+        return
+      end
+
+      caller_id = dedupe_requests_caller_id
+      # Without a caller identity, every unidentified caller would share one
+      # fingerprint, so two genuinely-different requests with the same body would
+      # collide and the second would be wrongly rejected. Skip de-duplication in
+      # that case (let the request through) and warn, rather than risk a false 409.
+      if caller_id.nil?
+        dedupe_requests_warn_missing_caller_id
+        yield
+        return
+      end
+
       result = dedupe_requests_guard.claim(
         request,
         ttl: dedupe_requests_ttl_for(action_name),
-        caller_id: dedupe_requests_caller_id
+        caller_id: caller_id
       )
 
       case result.outcome
@@ -110,6 +128,18 @@ module DedupeRequests
     # configured `caller_id` callable (so it can use current_user, a header, etc.).
     def dedupe_requests_caller_id
       DedupeRequests.config.caller_id&.call(self)
+    end
+
+    def dedupe_requests_mutating_verb?
+      DedupeRequests::MUTATING_VERBS.include?(request.request_method.to_s)
+    end
+
+    # Loud on purpose: a missing caller identity silently weakens de-duplication,
+    # so we warn on every such request (via the configured logger, else stderr).
+    def dedupe_requests_warn_missing_caller_id
+      message = "[dedupe_requests] caller_id resolved to nil for #{controller_name}##{action_name} (#{request.request_method} #{request.path}); de-duplication skipped. Configure DedupeRequests.config.caller_id."
+      logger = DedupeRequests.config.logger
+      logger ? logger.warn(message) : warn(message)
     end
 
     def dedupe_requests_guard

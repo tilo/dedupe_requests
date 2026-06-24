@@ -6,7 +6,7 @@ Automatic server-side de-duplication of inbound mutating Rails requests (POST / 
 
 When a client re-sends the same mutating request — because of a retry, a network timeout, a double-click, or a buggy client — a non-idempotent endpoint often turns the duplicate into a 5xx (the resource is already created or modified).
 
-One go-to solution for this used to be to require the client to provide a idempotency key together with the request, and then reject duplicate requests (requests that use a previous idemptotency key).
+One go-to solution for this used to be to require the client to provide an idempotency key together with the request, and then reject duplicate requests (requests that use a previous idempotency key).
 
 `dedupe_requests` simplifies this, removing the requirement for providing an idempotency key, and instead auto-computes a fingerprint of each mutating request (effectively auto-generating the idempotency key on-the-fly), claims it atomically in Redis, and short-circuits a duplicate seen within a configurable window with a clean **409 Conflict** instead of letting it blow up your app.
 
@@ -30,6 +30,69 @@ GET and DELETE are never deduped. Time is not part of the fingerprint — the ti
 ```ruby
 # Gemfile
 gem "dedupe_requests"
+```
+
+## Configuration: Who's your caller?
+
+There is an important configuration we can not decide for you: **what identifies your caller?**
+
+APIs typically have different callers, and you need to configure a way we can establish a `caller_id` that identifies the unique caller for `dedupe_requests` to work properly.
+
+If you have end users, the caller is an individual user.
+If you have a B2B application, the caller is probably your business partner.
+
+Make sure to configure the `caller_id` mechanism correctly.
+
+**There is no default — you must set `caller_id`.** If it's unset (or your callable returns `nil` for a request), `dedupe_requests` **skips de-duplication for that request** (it's allowed through) and logs a warning. That's deliberate: with no caller identity, two *different* callers sending the same payload would collide and the second would get a wrong 409. So de-duplication only kicks in once `caller_id` resolves to a value.
+
+> **⚠️ Do not use a raw bearer token, API key, or session id as the identity.** They are secret and they rotate — so the same caller would look like different callers (silently weakening de-duplication), and you'd be leaking a secret into the dedup layer. Derive a **stable, non-secret** identifier instead: a user id, a JWT `sub`, an API-client id.
+
+`caller_id` is a callable given the **controller** (reach the request with `controller.request`):
+
+```ruby
+# config/initializers/dedupe_requests.rb
+DedupeRequests.configure do |c|
+  c.caller_id = ->(controller) { controller.current_user&.id }
+end
+```
+
+Here are common ways to identify the caller — read any of them through the `controller` and return it from your `caller_id` lambda (e.g. `->(controller) { controller.request.headers['X-Client-ID'] }`):
+
+### Directly:
+* `current_user.id` in a customer-facing application
+
+### Custom Headers: (only trustworthy if authenticated)
+* `request.headers['X-Client-ID']`
+* `request.headers['X-Organization-Id']`
+* `request.headers['X-Partner-Id']`
+
+### Indirectly: (tokens can rotate or have a nonce)
+* `request.headers["X-API-Key"]`
+  `partner = ApiClient.find_by!(api_key: api_key)`
+
+* `request.headers["Authorization"]` — decode the JWT and key on a stable claim:
+
+```ruby
+c.caller_id = ->(controller) do
+  claims = decode_jwt(controller.request.headers["Authorization"])
+  claims["sub"] # or claims["partner_id"]
+end
+```
+
+### Infrastructure-Provided Identity
+
+`request.headers['X-Authenticated-User']`
+`request.headers['X-Forwarded-Client-Cert']`
+`request.headers['X-Amzn-Oidc-Identity']`
+`request.headers['X-Goog-Authenticated-User-Id']`
+
+### Network-Based Identity: (rare and finicky)
+* `caller_ips.include?(request.remote_ip)` # if you know the IP ranges for each caller
+
+**Only one caller? Dedupe globally.** If your API has a single caller — or you want to de-duplicate across all callers regardless of who's calling — return a fixed value so every request shares one identity (this also suppresses the no-identity warning):
+
+```ruby
+c.caller_id = ->(_) { "global" }
 ```
 
 ## Usage
@@ -98,29 +161,17 @@ You never specify HTTP verbs per action — the route already determines the ver
 
 ### 3. Per-caller identity (`caller_id`)
 
-Dedup is scoped per caller, so two different users sending the same payload don't collide. `caller_id` is a callable given the **controller**, so it can read whatever identifies the caller:
-
-```ruby
-DedupeRequests.configure do |c|
-  c.caller_id = ->(controller) { controller.current_user&.id }                       # current_user
-  # c.caller_id = ->(controller) { controller.request.get_header("HTTP_X_API_KEY") }  # a header
-  # c.caller_id = ->(controller) { controller.some_method }                           # any controller method
-end
-```
-
-If you don't set it, the default derives identity from the `Authorization` header, falling back to a Rails session cookie — so token- and cookie-auth apps work with no configuration.
-
-> **Note:** make sure you configure `caller_id` correctly for your API. If it can't derive an identity (no `Authorization` header and no session cookie), it falls back to `nil` — and then *different* callers sending the same payload to the same endpoint are treated as one request, so the second gets a 409. That's probably not what you want, so set `caller_id` to whatever identifies a caller in your app.
+⚠️ `caller_id` scopes de-duplication per caller, and it **must be customized and properly configured for your application** — see the **Configuration** section above. There is no default; if it resolves to `nil`, that request is not de-duplicated (and a warning is logged).
 
 ## Modes and safe rollout
 
 `mode` has three states:
 
 - `:off` — disabled; no fingerprinting, no storage.
-- `:observe` — **shadow mode**: compute and store fingerprints and fire the metrics hooks, but never return a 409. Duplicates are detected and reported only.
+- `:observe` — **shadow mode**: compute and store fingerprints and fire `on_duplicate_detected`, but never return a 409. Duplicates are detected and reported only.
 - `:enforce` — detect, store, and reject duplicates with a 409.
 
-Recommended rollout on a live service: enable `:observe`, build a dashboard from the `duplicate_detected` hook, watch real volume for a week or two, then flip to `:enforce`.
+Recommended rollout on a live service: enable `:observe`, build a dashboard from the `on_duplicate_detected` hook, watch real volume for a week or two, then flip to `:enforce`.
 
 ## Observability
 
@@ -133,7 +184,7 @@ DedupeRequests.configure do |c|
 end
 ```
 
-Each hook receives `{ fingerprint:, controller:, action:, verb:, path: }`. `duplicate_detected` fires in both `observe` and `enforce`; `duplicate_rejected` only when a 409 is actually returned.
+Each hook receives `{ fingerprint:, controller:, action:, verb:, path: }`. `on_duplicate_detected` fires in both `observe` and `enforce`; `on_duplicate_rejected` only when a 409 is actually returned.
 
 When tagging metrics, use only `controller`, `action`, and `verb` — these come from a small fixed set. Do **not** tag with `fingerprint` or `path`: the fingerprint is unique per request and the path usually contains record ids, so tagging with them creates a separate counter per request (a surprise bill on Datadog, or dropped series and broken dashboards). Log those instead if you need them.
 
@@ -169,7 +220,7 @@ A `409` is deliberate: well-behaved retrying clients do **not** loop on a 409 (t
 | `ttl`                    | `90`                 | Dedup window, in seconds.                                         |
 | `digest`                 | `:sha256`            | `:sha256` / `:sha512` / `:sha1` / `:md5`, or a callable.          |
 | `namespace`              | `"dedupe_requests"`  | Redis key prefix (`<namespace>:dedup:<hash>`).                    |
-| `caller_id`              | Authorization / session cookie | Callable **given the controller**, returns a per-caller identity (e.g. `->(c){ c.current_user&.id }`, a header via `c.request`, or any controller method). Default derives it from the Authorization header / session cookie. |
+| `caller_id`              | none (required)      | Callable **given the controller**, returns a stable, non-secret per-caller identity (e.g. `->(c){ c.current_user&.id }`). No default — if unset or it returns `nil`, that request is not de-duplicated (and a warning is logged). |
 | `fingerprint`            | `nil`                | Callable **given the request**, returns the fingerprint string — fully overriding the default computation. |
 | `conflict_status`        | `409`                | Status returned for a rejected duplicate.                        |
 | `conflict_body`          | structured errors    | JSON body for a rejected duplicate.                              |

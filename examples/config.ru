@@ -52,10 +52,12 @@ DedupeRequests.configure do |c|
   c.redis = Redis.new(url: ENV.fetch("REDIS_URL", "redis://localhost:6379/15"))
   c.mode  = ENV.fetch("DEDUPE_MODE", "enforce").to_sym
   c.ttl   = GLOBAL_TTL
-  # caller_id is left at its default, which derives the caller identity from the
-  # request's Authorization header. The integration test sends a different
-  # `Authorization: Bearer <token>` per simulated caller, so the same payload from
-  # two different callers fingerprints differently and is NOT treated as a duplicate.
+
+  # ⚠️  DEMO ONLY — uses the raw Authorization header as the caller_id to keep the
+  # test simple. Do NOT do this in production; see the README "Configuration"
+  # section for how to set a stable, non-secret caller_id.
+  # (Overridden below when DEDUPE_CUSTOM_CALLER_ID is set.)
+  c.caller_id = ->(controller) { controller.request.get_header("HTTP_AUTHORIZATION") }
 
   # Record the duplicate-notification hooks. on_duplicate_detected fires whenever a
   # duplicate is seen (observe AND enforce); on_duplicate_rejected fires only when a
@@ -75,9 +77,9 @@ DedupeRequests.configure do |c|
   end
 
   # When asked, replace caller_id with a custom one that identifies the caller by
-  # an X-Api-Key header (ignoring the Authorization header the default would use),
-  # so the test can prove this callable is what drives the per-caller scoping. It
-  # also records that the hook was invoked.
+  # an X-Api-Key header (instead of the Authorization header above), so the test
+  # can prove this callable is what drives the per-caller scoping. It also records
+  # that the hook was invoked.
   if ENV["DEDUPE_CUSTOM_CALLER_ID"] == "1"
     c.caller_id = lambda do |controller|
       key = controller.request.get_header("HTTP_X_API_KEY")
