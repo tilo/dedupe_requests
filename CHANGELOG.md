@@ -1,9 +1,9 @@
 # Changelog
 
-## 1.0.0.pre2 (2026-06-17)
+## 1.0.0.pre (2026-06-24)
 
-### Changed
-- **`caller_id` is now required and has no default.** The old default keyed on the `Authorization` header / session cookie — but **rotating tokens are unsafe to key on**, so that default was removed. Configure `caller_id` with a callable that returns a stable, non-secret identifier (a user id, a JWT `sub`, an API-client id).
+### Changes
+- **`caller_id` is now required -- set it to a callable (a lambda) - and has no default.** The old default keyed on the `Authorization` header / session cookie — but **rotating tokens are unsafe to key on**, so that default was removed. Configure `caller_id` with a callable that returns a stable, non-secret identifier (a user id, a JWT `sub`, an API-client id).
 - When `caller_id` is unset or resolves to `nil`, de-duplication is now **skipped** for that request (it's allowed through) and a warning is logged — instead of treating all unidentified callers as one identity (which could wrongly 409 a different caller's identical request). Return a fixed string from `caller_id` to dedupe globally.
 
 ## 1.0.0.pre1 (2026-06-16)
