@@ -67,51 +67,7 @@ RSpec.describe DedupeRequests::Configuration do
     expect(config.store.claim("fp", ttl: 1)).to eq(:error)
   end
 
-  describe "DEFAULT_CALLER_ID" do
-    def request_with(headers: {}, cookies: {})
-      RequestDouble.new(
-        request_method: "POST", path: "/x", query_string: "", raw_post: "",
-        headers: headers, cookies: cookies
-      )
-    end
-
-    it "uses the Authorization header when present" do
-      id = described_class::DEFAULT_CALLER_ID.call(request_with(headers: { "HTTP_AUTHORIZATION" => "Bearer z" }))
-      expect(id).to eq("Bearer z")
-    end
-
-    it "falls back to a Rails-style session cookie" do
-      id = described_class::DEFAULT_CALLER_ID.call(request_with(cookies: { "_myapp_session" => "abc" }))
-      expect(id).to eq("abc")
-    end
-
-    it "is nil when neither identity signal is present" do
-      expect(described_class::DEFAULT_CALLER_ID.call(request_with)).to be_nil
-    end
-
-    it "skips the Authorization check when the request has no get_header" do
-      obj = Object.new
-      def obj.cookies
-        { "_app_session" => "ck" }
-      end
-      expect(described_class::DEFAULT_CALLER_ID.call(obj)).to eq("ck")
-    end
-
-    it "returns nil when the request supports no cookies and has no auth" do
-      obj = Object.new
-      def obj.get_header(_name)
-        nil
-      end
-      expect(described_class::DEFAULT_CALLER_ID.call(obj)).to be_nil
-    end
-
-    it "ignores cookies that are not a session cookie" do
-      expect(described_class::DEFAULT_CALLER_ID.call(request_with(cookies: { "tracking" => "x" }))).to be_nil
-    end
-
-    it "reads from controller.request when given a controller" do
-      controller = Struct.new(:request).new(request_with(headers: { "HTTP_AUTHORIZATION" => "Bearer y" }))
-      expect(described_class::DEFAULT_CALLER_ID.call(controller)).to eq("Bearer y")
-    end
+  it "has no default caller_id (you must configure one)" do
+    expect(config.caller_id).to be_nil
   end
 end

@@ -59,13 +59,18 @@ RSpec.describe "Rails end-to-end with real Redis" do
     DedupeRequests.configure do |c|
       c.redis = redis
       c.namespace = "real_e2e"
+      # The default no longer reads Authorization; configure it explicitly. The
+      # post_json helper sends an HTTP_AUTHORIZATION header to identify the caller.
+      c.caller_id = ->(controller) { controller.request.get_header("HTTP_AUTHORIZATION") }
     end
   end
 
   after { redis.flushdb }
 
+  # Authorization header so the default caller_id resolves an identity (dedup is
+  # skipped when it can't).
   def post_json(path)
-    post path, "{}", "CONTENT_TYPE" => "application/json"
+    post path, "{}", "CONTENT_TYPE" => "application/json", "HTTP_AUTHORIZATION" => "Bearer test-caller"
   end
 
   it "claim survives a 2xx, so a real duplicate is rejected with 409" do
